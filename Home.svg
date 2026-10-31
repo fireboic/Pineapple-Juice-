@@ -27,17 +27,19 @@
         function launchGame(filename) {
           var overlay = document.getElementById('player-overlay');
           var frame = document.getElementById('game-frame-elem');
-          
-          // Connects directly to your jsDelivr raw link
-          frame.src = 'https://cdn.jsdelivr.net/gh/fireboic/Pineapple-Juice-@main/' + filename;
-          overlay.style.display = 'block';
+          if (overlay && frame) {
+            frame.src = 'https://cdn.jsdelivr.net/gh/fireboic/Pineapple-Juice-@main/' + filename;
+            overlay.style.display = 'block';
+          }
         }
 
         function closeGame() {
           var overlay = document.getElementById('player-overlay');
           var frame = document.getElementById('game-frame-elem');
-          frame.src = 'about:blank';
-          overlay.style.display = 'none';
+          if (overlay && frame) {
+            frame.src = 'about:blank';
+            overlay.style.display = 'none';
+          }
         }
       
     </script>
@@ -54,7 +56,7 @@
   <path d="M 45 20 Q 50 12 55 20 Q 50 24 45 20 Z" class="accent-green" />
   <text x="80" y="44" class="text-main" font-size="24">Pineapple Juice 🍍</text>
 
-  <!-- Navigation Buttons -->
+  <!-- Navigation Links -->
   <text x="620" y="43" class="text-main" font-size="15">Home</text>
   <rect x="690" y="22" width="90" height="34" class="wireframe-pill" />
   <text x="705" y="43" class="text-main" font-size="15">Pages ▾</text>
@@ -88,7 +90,7 @@
     <circle cx="360" cy="430" r="24" class="accent-orange" />
     <text x="353" y="437" class="text-light" font-size="20">▶</text>
     <text x="170" y="515" class="text-main" font-size="18">DuckMath</text>
-    <text x="170" y="535" class="text-muted" font-size="13">duckmath.svg • Play math & puzzle games</text>
+    <text x="170" y="535" class="text-muted" font-size="13">duckmath.svg • Math & puzzle games</text>
     <rect x="170" y="548" width="65" height="20" class="badge-best" />
     <text x="180" y="562" class="text-light" font-size="10">BEST ⭐</text>
   </g>
@@ -108,7 +110,7 @@
   <!-- Footer Info -->
   <text x="600" y="660" class="text-muted" font-size="14" text-anchor="middle">Pineapple Juice • Powered completely via jsDelivr CDN</text>
 
-  <!-- Full-Screen In-SVG Game iFrame Modal -->
+  <!-- Full-Screen In-SVG Game iFrame Modal Overlay -->
   <g id="player-overlay">
     <rect x="0" y="0" width="1200" height="850" fill="#0f172a" opacity="0.96" />
     
@@ -118,7 +120,7 @@
       <text x="60" y="50" class="text-light" font-size="15">← Close</text>
     </g>
 
-    <!-- Embedded iFrame Loader -->
+    <!-- Embedded iFrame Loader pointing to your CDN SVGs -->
     
       
     
