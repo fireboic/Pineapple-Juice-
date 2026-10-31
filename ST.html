@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Stick Fight</title>
+    <style>
+        body { margin: 0; background: #050505; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; font-family: 'Courier New', Courier, monospace; color: white; overflow: hidden; }
+        canvas { border: 5px solid #222; background: #fdfdfd; box-shadow: 0 0 60px rgba(0,0,0,0.9); }
+        #ui { position: absolute; pointer-events: none; width: 800px; height: 400px; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
+        .menu, .win-screen { background: rgba(0,0,0,0.96); width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; pointer-events: all; position: absolute; }
+        .win-screen { display: none; }
+        .btn { padding: 12px 30px; background: #111; color: white; border: 2px solid #444; font-size: 18px; cursor: pointer; border-radius: 4px; font-weight: bold; transition: 0.2s; margin: 8px;}
+        .btn:hover { background: white; color: black; transform: scale(1.05); }
+        .setting { margin: 10px; font-size: 14px; color: #888; display: flex; align-items: center; gap: 8px; cursor: pointer; pointer-events: all; }
+        .controls-bar { margin-top: 10px; width: 800px; text-align: center; font-size: 12px; color: #555; padding: 5px; }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <div id="mainMenu" class="menu">
+            <h1 style="font-size: 50px; color: #eee; margin: 0 0 20px 0; letter-spacing: 10px;">SHADOW FIGHT</h1>
+            <button class="btn" onclick="initGame('VERSUS')">VERSUS MODE</button>
+            <button class="btn" onclick="initGame('BOSSRUSH')" style="border-color: #e74c3c; color: #e74c3c;">BOSS RUSH (AI)</button>
+            <label class="setting"><input type="checkbox" id="hitboxToggle"> Debug Hitboxes</label>
+        </div>
+        <div id="winScreen" class="win-screen">
+            <h1 id="winnerText" style="font-size: 48px;">VICTORY</h1>
+            <p id="bossScore" style="color: #888; display: none;"></p>
+            <button class="btn" onclick="location.reload()">RETRY</button>
+        </div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+    
+    <div class="controls-bar">
+        <b>BLUE:</b> WASD | SPACE (Punch) | F (Kick) | E (Block) <br>
+        <b>RED:</b> ARROWS | ENTER (Punch) | M (Kick) | SHIFT (Block)
+    </div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const ui = {
+        main: document.getElementById('mainMenu'),
+        win: document.getElementById('winScreen'),
+        text: document.getElementById('winnerText'),
+        score: document.getElementById('bossScore'),
+        hitboxCheck: document.getElementById('hitboxToggle')
+    };
+
+    canvas.width = 800; canvas.height = 400;
+    let gameState = 'MENU';
+    let gameFrame = 0;
+    let flashColor = null;
+    let showHitboxes = false;
+    let parryTextTimer = 0;
+    let bossesDefeated = 0;
+
+    const GRAVITY = 0.5; const FRICTION = 0.85; const ACCEL = 1.0;
+    const BLOCK_DURATION = 240; // Slightly longer: 4 seconds
+    const BLOCK_COOLDOWN = 360; // 6 seconds
+    const INVIS_DURATION = 105; // 1.75 seconds @ 60fps
+
+    function initGame(mode) {
+        gameMode = mode;
+        showHitboxes = ui.hitboxCheck.checked;
+        gameState = 'PLAYING';
+        ui.main.style.display = 'none';
+        p2.isBot = (mode === 'BOSSRUSH');
+        if (p2.isBot) spawnBoss();
+        window.focus();
+    }
+
+    function spawnBoss() {
+        p2.health = 80 + (bossesDefeated * 20);
+        p2.position = { x: 700, y: 0 };
+        p2.velocity = { x: 0, y: 0 };
+        p2.state = 'IDLE';
+        p2.invisTimer = 0;
+    }
+
+    class StickFigure {
+        constructor({ position, color, keys, facingRight }) {
+            this.position = position; this.velocity = { x: 0, y: 0 };
+            this.height = 100; this.width = 30; this.color = color;
+            this.health = 100; this.keys = keys; this.facingRight = facingRight;
+            this.state = 'IDLE'; this.attackType = null; this.frameInState = 0;
+            this.isBot = false; this.isGrounded = false;
+            
+            this.blockTimer = 0;
+            this.blockCooldownTimer = 0;
+            this.vulnerableTimer = 0;
+            this.invisTimer = 0;
+        }
+
+        draw() {
+            // Invisibility Logic
+            if (this.invisTimer > 0) {
+                ctx.globalAlpha = 0.15; // Ghostly look
+            } else {
+                ctx.globalAlpha = 1.0;
+            }
+
+            const drawL = (p1, p2, w, c) => {
+                ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
+                ctx.lineWidth = w; ctx.strokeStyle = c; ctx.lineCap = "round"; ctx.stroke();
+            };
+            const cX = this.position.x + this.width / 2;
+            const hY = this.position.y, nY = hY + 15, hiY = hY + 55, fY = this.position.y + this.height;
+            const flip = this.facingRight ? 1 : -1;
+            let LfX = cX-12, RfX = cX+12, LhX = cX-15, RhX = cX+15, LhY = nY+30, RhY = nY+30, RfY = fY;
+
+            let renderColor = this.color;
+            if (this.vulnerableTimer > 0 && gameFrame % 10 < 5) renderColor = "#ff0000";
+
+            if (this.state === 'BLOCKING') {
+                LhX = cX + 10 * flip; LhY = nY + 5; RhX = cX + 15 * flip; RhY = nY - 5;
+                ctx.beginPath(); ctx.arc(cX + 15 * flip, nY + 5, 25, -Math.PI/2, Math.PI/2, !this.facingRight);
+                ctx.strokeStyle = renderColor; ctx.lineWidth = 3; ctx.stroke();
+            } else if (this.state === 'STARTUP' || this.state === 'ACTIVE' || this.state === 'RECOVERY') {
+                if (this.attackType === 'punch') {
+                    let ext = (this.state === 'ACTIVE') ? 55 : 20;
+                    RhX = cX + (ext * flip); RhY = nY + 5;
+                } else {
+                    let ext = (this.state === 'ACTIVE') ? 70 : 25;
+                    RfX = cX + (ext * flip); RfY = hiY + (this.state === 'ACTIVE' ? -15 : 25);
+                }
+            } else if (Math.abs(this.velocity.x) > 0.5 && this.isGrounded) {
+                const cycle = Math.sin(gameFrame * 0.3) * 22;
+                LfX = cX + cycle; RfX = cX - cycle;
+            }
+
+            ctx.beginPath(); ctx.arc(cX, hY, 12, 0, Math.PI * 2); ctx.fillStyle = renderColor; ctx.fill();
+            drawL({x: cX, y: nY}, {x: cX, y: hiY}, 6, renderColor);
+            drawL({x: cX, y: nY}, {x: LhX, y: LhY}, 4, renderColor);
+            drawL({x: cX, y: nY}, {x: RhX, y: RhY}, 4, renderColor);
+            drawL({x: cX, y: hiY}, {x: LfX, y: fY}, 5, renderColor);
+            drawL({x: cX, y: hiY}, {x: RfX, y: RfY}, 5, renderColor);
+
+            ctx.globalAlpha = 1.0; // Reset alpha for UI/Hitboxes
+
+            if (showHitboxes) {
+                ctx.strokeStyle = 'green'; ctx.strokeRect(this.position.x, this.position.y, this.width, this.height);
+                const hb = this.getHitbox();
+                if (hb) { ctx.fillStyle = 'rgba(255,0,0,0.3)'; ctx.fillRect(hb.x, hb.y, hb.w, hb.h); }
+            }
+        }
+
+        update() {
+            this.draw(); this.frameInState++;
+            if (this.blockCooldownTimer > 0) this.blockCooldownTimer--;
+            if (this.vulnerableTimer > 0) this.vulnerableTimer--;
+            if (this.invisTimer > 0) this.invisTimer--;
+
+            if (this.state === 'BLOCKING') {
+                this.blockTimer--;
+                if (this.blockTimer <= 0) {
+                    this.state = 'IDLE'; this.blockCooldownTimer = BLOCK_COOLDOWN; this.vulnerableTimer = 180;
+                }
+            }
+
+            if (this.state === 'STARTUP' && this.frameInState > (this.attackType === 'punch' ? 4 : 12)) { this.state = 'ACTIVE'; this.frameInState = 0; }
+            if (this.state === 'ACTIVE' && this.frameInState > 8) { this.state = 'RECOVERY'; this.frameInState = 0; }
+            if (this.state === 'RECOVERY' && this.frameInState > 40) { this.state = 'IDLE'; this.frameInState = 0; }
+
+            if (this.isBot && gameState === 'PLAYING') {
+                const dx = p1.position.x - this.position.x;
+                if (Math.abs(dx) > 60) this.velocity.x += dx > 0 ? 0.6 : -0.6;
+                else if (this.state === 'IDLE' && Math.random() < 0.04) this.startAttack(Math.random() > 0.5 ? 'punch' : 'kick');
+                if (this.isGrounded && Math.random() < 0.01) this.velocity.y = -14;
+            }
+
+            this.velocity.x *= FRICTION; this.position.x += this.velocity.x;
+            this.velocity.y += GRAVITY; this.position.y += this.velocity.y;
+            if (this.position.y + this.height >= 380) { this.position.y = 380 - this.height; this.velocity.y = 0; this.isGrounded = true; } else this.isGrounded = false;
+            if (this.position.x < 5) this.position.x = 5; if (this.position.x + this.width > 795) this.position.x = 795 - this.width;
+            if (Math.abs(this.velocity.x) > 0.2 && this.state !== 'BLOCKING') this.facingRight = this.velocity.x > 0;
+        }
+
+        startAttack(t) { if (this.state === 'IDLE') { this.state = 'STARTUP'; this.attackType = t; this.frameInState = 0; } }
+        getHitbox() {
+            if (this.state !== 'STARTUP' && this.state !== 'ACTIVE') return null;
+            const cX = this.position.x + this.width / 2;
+            const isK = this.attackType === 'kick';
+            return { x: this.facingRight ? cX : cX - (isK ? 85 : 65), y: this.position.y + (isK ? 40 : 10), w: isK ? 85 : 65, h: 40, type: this.state, atk: this.attackType };
+        }
+    }
+
+    const p1 = new StickFigure({ position: { x: 100, y: 200 }, color: '#3498db', facingRight: true, keys: { l:'a', r:'d', j:'w', p:' ', k:'f', b:'e' } });
+    const p2 = new StickFigure({ position: { x: 650, y: 200 }, color: '#e74c3c', facingRight: false, keys: { l:'ArrowLeft', r:'ArrowRight', j:'ArrowUp', p:'Enter', k:'m', b:'Shift' } });
+
+    const keys = {};
+    window.addEventListener('keydown', e => { 
+        keys[e.key] = true;
+        if (gameState === 'PLAYING') {
+            const p = (e.key === p1.keys.p) ? p1 : (!p2.isBot && e.key === p2.keys.p ? p2 : null);
+            if (p) p.startAttack('punch');
+            const k = (e.key === p1.keys.k) ? p1 : (!p2.isBot && e.key === p2.keys.k ? p2 : null);
+            if (k) k.startAttack('kick');
+            const b = (e.key === p1.keys.b) ? p1 : (!p2.isBot && e.key === p2.keys.b ? p2 : null);
+            if (b && b.isGrounded && b.blockCooldownTimer <= 0 && b.state === 'IDLE') { b.state = 'BLOCKING'; b.blockTimer = BLOCK_DURATION; }
+            const j = (e.key === p1.keys.j) ? p1 : (!p2.isBot && e.key === p2.keys.j ? p2 : null);
+            if (j && j.isGrounded) j.velocity.y = -14;
+        }
+    });
+    window.addEventListener('keyup', e => { 
+        keys[e.key] = false;
+        if (e.key === p1.keys.b && p1.state === 'BLOCKING') { p1.state = 'IDLE'; p1.blockCooldownTimer = BLOCK_COOLDOWN; }
+        if (!p2.isBot && e.key === p2.keys.b && p2.state === 'BLOCKING') { p2.state = 'IDLE'; p2.blockCooldownTimer = BLOCK_COOLDOWN; }
+    });
+
+    function resolveHit(a, v) {
+        const hb = a.getHitbox();
+        if (hb && hb.type === 'ACTIVE' && rectsOverlap(hb, {x: v.position.x, y: v.position.y, w: v.width, h: v.height})) {
+            if (v.state === 'BLOCKING') {
+                // SUCCESSFUL BLOCK REWARDS
+                v.health = Math.min(100, v.health + 16);
+                v.invisTimer = INVIS_DURATION;
+                v.state = 'IDLE'; v.blockCooldownTimer = BLOCK_COOLDOWN;
+                a.health -= 8; a.velocity.x = (a.position.x < v.position.x ? -20 : 20);
+                a.state = 'RECOVERY'; flashColor = v.color;
+            } else {
+                let dmg = (hb.atk === 'kick' ? 12 : 9);
+                if (v.vulnerableTimer > 0) dmg *= 2;
+                v.health -= dmg; a.state = 'RECOVERY'; a.frameInState = 30;
+                v.velocity.x = a.facingRight ? 12 : -12;
+            }
+        }
+    }
+
+    function rectsOverlap(r1, r2) { return (r1.x < r2.x + r2.w && r1.x + r1.w > r2.x && r1.y < r2.y + r2.h && r1.y + r1.h > r2.y); }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        if (gameState !== 'PLAYING') return;
+        gameFrame++;
+        ctx.fillStyle = flashColor ? flashColor + '22' : '#fdfdfd'; 
+        if (flashColor) setTimeout(() => flashColor = null, 100);
+        ctx.fillRect(0,0,800,400);
+        ctx.fillStyle = '#222'; ctx.fillRect(0, 380, 800, 20);
+
+        if (keys[p1.keys.l]) p1.velocity.x -= ACCEL; if (keys[p1.keys.r]) p1.velocity.x += ACCEL;
+        if (!p2.isBot) { if (keys[p2.keys.l]) p2.velocity.x -= ACCEL; if (keys[p2.keys.r]) p2.velocity.x += ACCEL; }
+
+        const hb1 = p1.getHitbox(), hb2 = p2.getHitbox();
+        // SAME-TYPE ATTACK PARRY (Punch vs Punch)
+        if (hb1 && hb2 && hb1.atk === hb2.atk && rectsOverlap(hb1, hb2)) {
+            p1.state = p2.state = 'RECOVERY'; p1.frameInState = p2.frameInState = 0;
+            p1.velocity.x = -15; p2.velocity.x = 15; parryTextTimer = 40; flashColor = '#f1c40f';
+        } else { resolveHit(p1, p2); resolveHit(p2, p1); }
+
+        p1.update(); p2.update();
+
+        if (parryTextTimer > 0) {
+            ctx.fillStyle = '#f39c12'; ctx.font = 'bold 30px Arial'; ctx.textAlign = 'center';
+            ctx.fillText("CLASH!", 400, 150); parryTextTimer--;
+        }
+
+        // HUD
+        ctx.fillStyle = '#333'; ctx.fillRect(50, 20, 300, 20); ctx.fillRect(450, 20, 300, 20);
+        ctx.fillStyle = p1.color; ctx.fillRect(51, 21, Math.max(0, p1.health * 2.98), 18);
+        ctx.fillStyle = p2.color; ctx.fillRect(451 + (298 - Math.max(0, p2.health * 2.98)), 21, Math.max(0, p2.health * 2.98), 18);
+
+        if (p1.health <= 0 || p2.health <= 0) {
+            if (gameMode === 'BOSSRUSH' && p2.health <= 0) { bossesDefeated++; p1.health = Math.min(100, p1.health + 30); spawnBoss(); }
+            else { gameState = 'FINISHED'; ui.win.style.display = 'flex'; ui.text.innerText = p1.health > 0 ? "BLUE WINS" : "RED WINS";
+                if (gameMode === 'BOSSRUSH') { ui.score.style.display = 'block'; ui.score.innerText = `Killed: ${bossesDefeated}`; }
+            }
+        }
+    }
+    animate();
+</script>
+</body>
+</html>
